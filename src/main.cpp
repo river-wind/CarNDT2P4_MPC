@@ -77,7 +77,7 @@ int main() {
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     string sdata = string(data).substr(0, length);
-    cout << sdata << endl;
+    //cout << sdata << endl;
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
       string s = hasData(sdata);
       if (s != "") {
@@ -91,21 +91,77 @@ int main() {
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+	  double steer_value = j[1]["steering_angle"]; 
+	  double throttle_value = j[1]["throttle"];
 
-          /*
+	  //CEL: translate from global map to car coordinants
+	  for (size_t i = 0; i < ptsx.size(); i++)
+	  {
+	    //shift car reference angle to 90 degrees
+	    double x_diff = ptsx[i] - px;
+	    double y_diff = ptsy[i] - py;
+	    ptsx[i] = (x_diff * cos(-psi) - y_diff * sin(-psi));
+	    ptsy[i] = (x_diff * sin(-psi) + y_diff * cos(-psi));
+	  }
+	  
+	  //CEL: add latency handling of 0.1s into model
+	  px = v * cos(steer_value) * 0.1;
+	  py = v * sin(steer_value) * 0.1;
+ 	  psi = -v * steer_value * 0.1 / 2.67;
+
+	  //CEL Vector conversion from Q&A video
+	  double* ptrx = &ptsx[0];
+	  Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx, 6);
+	  
+	  double* ptry = &ptsy[0];
+	  Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry, 6);
+	  
+	  //CEL fit the polynomial and get the coefficients
+	  auto coeffs = polyfit(ptsx_transform, ptsy_transform, 3);
+	  
+	  //CEL: calculate cte from polyeval
+	  double cte = polyeval(coeffs, 0);
+	  //CEL: calculate the epsi
+  	  double epsi = psi - atan(coeffs[1] + 2 * px * coeffs[2] + 3 * coeffs[3] * pow(px, 2));
+	  
+	  //CEL: initial state vector, with latency factored in to x, y, and psi positions
+	  Eigen::VectorXd state(6);
+	  state << px, py, psi, v, cte, epsi;
+	  
+
+          ;/*
           * TODO: Calculate steering angle and throttle using MPC.
           *
           * Both are in between [-1, 1].
           *
           */
-          double steer_value;
-          double throttle_value;
+
+	  //Solve the MPC
+	  vector<double> vars = mpc.Solve(state, coeffs);
+          double Lf = 2.67;
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = throttle_value;
+          msgJson["steering_angle"] = vars[0]/(deg2rad(25)*Lf);  //steer_value in correct form [-1, 1]
+          msgJson["throttle"] = vars[1]; //throttle_value as is
+
+
+          //Display the waypoints/reference line
+          vector<double> next_x_vals;
+          vector<double> next_y_vals;
+
+	  for (int i = 1; i < 25; i++)
+	  {
+	    next_x_vals.push_back(2.5 * i);
+	    next_y_vals.push_back(polyeval(coeffs, 2.5 * i));
+	  }
+
+          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
+          // the points in the simulator are connected by a Yellow line
+
+          msgJson["next_x"] = next_x_vals;
+          msgJson["next_y"] = next_y_vals;
 
           //Display the MPC predicted trajectory 
           vector<double> mpc_x_vals;
@@ -113,19 +169,22 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
+	  //CEL from Q&A even is x, odd is y
+	  for (size_t i = 2; i < vars.size(); i++)
+	  {
+	    if(i%2 == 0)
+		{
+		  mpc_x_vals.push_back(vars[i]);
+		}
+		else
+		{
+		  mpc_y_vals.push_back(vars[i]);
+		}
+	  }
+
 
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
-
-          //Display the waypoints/reference line
-          vector<double> next_x_vals;
-          vector<double> next_y_vals;
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Yellow line
-
-          msgJson["next_x"] = next_x_vals;
-          msgJson["next_y"] = next_y_vals;
 
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";

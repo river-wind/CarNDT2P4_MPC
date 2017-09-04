@@ -1,7 +1,12 @@
+## Build a Model Predictive Controller
 # CarND-Controls-MPC
-Self-Driving Car Engineer Nanodegree Program
-
+[![Udacity - Self-Driving Car NanoDegree](https://s3.amazonaws.com/udacity-sdc/github/shield-carnd.svg)](http://www.udacity.com/drive)
 ---
+
+## Overview
+  The purpose of this project is to build a Model Predictive Controller, using the content built during the MPC quizes, and relying on a number of topics covered previously, such a coordinate rotation.  The project began with a code framework provided by the Udacity team, with specific sections left as TODO's for the student to complete.  The bulk of the code was taken from the MPC quiz code, which had been developed in the lesson just prevously.  In the project, this code was tied to the simulator used througout this term, cost function weights modified, and actuator latency accounted for.  The output of the project code are JSON messages which allow the simluator to drive the virtual car around the lake track, display the road's target trajectory(yellow), along with the MPC's planned trajectory(green).  The output of a successful run around the track can be seen in the video section of the writeup.
+
+  The build instructions follow, with the Rubric at the end of this README.  
 
 ## Dependencies
 
@@ -42,8 +47,7 @@ Self-Driving Car Engineer Nanodegree Program
        ```brew upgrade ipopt --with-openblas```
        per this [forum post](https://discussions.udacity.com/t/incorrect-checksum-for-freed-object/313433/19).
   * Linux
-    * You will need a version of Ipopt 3.12.1 or higher. The version available through `apt-get` is 3.11.x. If you can get that version to work great but if not there's a script `install_ipopt.sh` that will install Ipopt. You just need to download the source from the Ipopt [releases page](https://www.coin-or.org/download/source/Ipopt/).
-    * Then call `install_ipopt.sh` with the source directory as the first argument, ex: `sudo bash install_ipopt.sh Ipopt-3.12.1`. 
+    * You will need a version of Ipopt 3.12.1 or higher. The version available through `apt-get` is 3.11.x, which can work with modifications as described on this [Udacity support forums post](https://discussions.udacity.com/t/windows-linux-build-using-ipopt-3-11-x-installation/341644?source_topic_id=355940) otherwise, download 3.12.x and run  `sudo bash install_ipopt.sh C:/downloaddir/Ipopt-3.12.x` to install Ipopt. [Ipopt releases page](https://www.coin-or.org/download/source/Ipopt/).
   * Windows: TODO. If you can use the Linux subsystem and follow the Linux instructions.
 * [CppAD](https://www.coin-or.org/CppAD/)
   * Mac: `brew install cppad`
@@ -53,79 +57,39 @@ Self-Driving Car Engineer Nanodegree Program
 * Simulator. You can download these from the [releases tab](https://github.com/udacity/self-driving-car-sim/releases).
 * Not a dependency but read the [DATA.md](./DATA.md) for a description of the data sent back from the simulator.
 
-
 ## Basic Build Instructions
-
 
 1. Clone this repo.
 2. Make a build directory: `mkdir build && cd build`
 3. Compile: `cmake .. && make`
 4. Run it: `./mpc`.
 
-## Tips
+## Rubric
 
-1. It's recommended to test the MPC on basic examples to see if your implementation behaves as desired. One possible example
-is the vehicle starting offset of a straight line (reference). If the MPC implementation is correct, after some number of timesteps
-(not too many) it should find and track the reference line.
-2. The `lake_track_waypoints.csv` file has the waypoints of the lake track. You could use this to fit polynomials and points and see of how well your model tracks curve. NOTE: This file might be not completely in sync with the simulator so your solution should NOT depend on it.
-3. For visualization this C++ [matplotlib wrapper](https://github.com/lava/matplotlib-cpp) could be helpful.
+The Rubric is a set of goals the project code must meet.  I address each one here.  
+1) The code must compile with "cmake" and "make.   
+   The code does compile with cmake and make, and all warnings have been cleaned up.
 
-## Editor Settings
+2) The Model.  (Describe the model in detail)  
+  The model contains 6 features stored in a vector, along with 2 actuators.  The state includes the x and y position, the angle psi, the cross track error, and the psi error[x,y,?,v,cte,e?].  The two actuator values are the delta(steering) and accelleration(throttle)[ë,a].
+  The model attempts to predict a desired future state for the vehicle N time steps into the future, relying on a target trajectory and a cost function.  The model attempts to limit the result of this cost function, which includes a number of factors about the car's behavior.  The most important of these factors is the error between the car's position and the desired lane centerline, or "cross track error" or CTE.  If the CTE is too great, the car ends up in a ditch.  However, the CTE is not the only important part of the cost function.  The angle or heading of the vehicle, the speed, and the degree of change in steering are all important to ensure that the car stays on the road, and the passengers are not injured along the way.  In trying to reach the centerline and minimize the CTE, too great of a steering angle will result in swerving, and too great of a change in throttle will result in seat-belt bruises.  For these reasons, the CTE and psi error are weighted in the cost function as the largest influencers, with the steering and throttle also included, but with smaller weights.  This slows the rate of change of any aspect of the vehicle's behavior, while aiming for a centered and stable trip.  To avoid this cost function finding a local minimum and simply stopping in the middle of the road, we also penalize the vehicle for traveling at any speed below a target reference velocity, here set to 60.
+  The vars vector is a vector including N * the 6 features and 2 actuators, holding the projected future states predicted by the model.  The fg vector contains the cost function at fg[0], plus the vars content and the constraints we will define on the model.
+  Ipopt expects equations with an upper and lower bound for the acceptable solutions.  For most of our purposes, we are attempting to find 0 difference, denoting an equality.  So instead of calculating x1, we find the difference between the projected x1 and the calculation used to find it:  x1 - (x0 + v0 * CppAD::cos(psi0) * dt) .
+  We then use the provided polyfit equation to fit a third order polynomial to the waypoints, and get back a vectors of coefficients, which are in turn used to find the cross track error and psi error.  This process is then repeated, using the letancy-controlled state to re-initialize the predicted trajectory, and re-determine the CTE and psi error once again.
 
-We've purposefully kept editor configuration files out of this repo in order to
-keep it as simple and environment agnostic as possible. However, we recommend
-using the following settings:
+3) Timestep Length and Elapsed Duration (N & dt)  
+  N was originally set to 20, with a dt of 0.05, which is 1s/N.  This lead to a fairly chaotic result, with the car eventually running off the track.  I set about shortening the N value per the recomendation in the lessons of "as large as possible" (but not too large).  Moving to N=15 and dt of 0.06667, the results was improved but still not good enough.  I tried N=10 and dt=0.01 as suggested in the Q&A video, and that value pair worked.  I also tried values lower than 10 for N, with decresing effectiveness as the number got smaller - for example, an N of 6 resulted in a successful run of the track, but the car hung to the right shoulder the entire time. 
 
-* indent using spaces
-* set tab width to 2 spaces (keeps the matrices in source code aligned)
+4) Polynomial Fitting and MPC Preprocessing  
+   The polyfit() function provided in the framework code was used to fit a third order polynomial to the waypints of the target trajectory.  The only major preprocessing done was to rotate from the global to car coordinate space.
 
-## Code Style
+5) Model Predictive Control with Latency  
+  The projejct induded a requirement to handle artificial latency added into the code by a sleep() line, pausing the system for 100 milliseconds.  This delay was added to model real-world delays between issuing a command to a actuator and the actuator completing that command, including all latency in communication channels between them.  To account for this delay, I have altered the model's state to include a 0.1s offset, in place of the 0's mentioned in the Q&A.  This was fed to the solver instead of the current state, effectively making decisions based on the car's future state rather than the current state.
+  This also required using the full formula for calculating the epsi, in place of the truncated version discussed in the Q&A video.
 
-Please (do your best to) stick to [Google's C++ style guide](https://google.github.io/styleguide/cppguide.html).
+6) The vehicle must successfully drive a lap around the track.  
+  With the current cost function weights, the car completes a lap of the track.  See https://youtu.be/6fz-J8Ld4Wg for a 2-lap recording of the MPC in practice.
 
-## Project Instructions and Rubric
-
-Note: regardless of the changes you make, your project must be buildable using
-cmake and make!
-
-More information is only accessible by people who are already enrolled in Term 2
-of CarND. If you are enrolled, see [the project page](https://classroom.udacity.com/nanodegrees/nd013/parts/40f38239-66b6-46ec-ae68-03afd8a601c8/modules/f1820894-8322-4bb3-81aa-b26b3c6dcbaf/lessons/b1ff3be0-c904-438e-aad3-2b5379f0e0c3/concepts/1a2255a0-e23c-44cf-8d41-39b8a3c8264a)
-for instructions and the project rubric.
-
-## Hints!
-
-* You don't have to follow this directory structure, but if you do, your work
-  will span all of the .cpp files here. Keep an eye out for TODOs.
-
-## Call for IDE Profiles Pull Requests
-
-Help your fellow students!
-
-We decided to create Makefiles with cmake to keep this project as platform
-agnostic as possible. Similarly, we omitted IDE profiles in order to we ensure
-that students don't feel pressured to use one IDE or another.
-
-However! I'd love to help people get up and running with their IDEs of choice.
-If you've created a profile for an IDE that you think other students would
-appreciate, we'd love to have you add the requisite profile files and
-instructions to ide_profiles/. For example if you wanted to add a VS Code
-profile, you'd add:
-
-* /ide_profiles/vscode/.vscode
-* /ide_profiles/vscode/README.md
-
-The README should explain what the profile does, how to take advantage of it,
-and how to install it.
-
-Frankly, I've never been involved in a project with multiple IDE profiles
-before. I believe the best way to handle this would be to keep them out of the
-repo root to avoid clutter. My expectation is that most profiles will include
-instructions to copy files to a new location to get picked up by the IDE, but
-that's just a guess.
-
-One last note here: regardless of the IDE used, every submitted project must
-still be compilable with cmake and make./
-
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
-
+## Conclusion
+  The MPC project was a difficult one, mostly due to the translation between theory and implementation through the Ipopt and CppAD libraries.  These had not been introduced prior to the MPC quizes, and installing them proved difficult; it took about 6 hours to get them working mostly in the configuration I have been using for Term 2, partially because the coin-or servers were down.
+  The other difficult aspect was applying the lesson's information on constraints to how Ipopt actually works.  While I understood the lesson's specific content, how to translate that into functional code was not clear to me at all by the time the MPC quiz apeared.  This was helped greatly by the Q&A video and the student forum discussions, of which there were many, suggesting a general confusion on this topic.  There is still a fair amount of the MPC process which seems unclear to me at this point, and I hope to get a better understanding during path planning in Part 3. 
